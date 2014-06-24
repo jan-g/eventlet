@@ -26,8 +26,8 @@ class Hub(BaseHub):
         except AttributeError:
             self.modify = self.poll.register
 
-    def add(self, evtype, fileno, cb, tb, mac):
-        listener = super(Hub, self).add(evtype, fileno, cb, tb, mac)
+    def add(self, evtype, fileno, cb, tb, mac, **kw):
+        listener = super(Hub, self).add(evtype, fileno, cb, tb, mac, kw)
         self.register(fileno, new=True)
         return listener
 

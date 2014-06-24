@@ -42,10 +42,10 @@ class Hub(poll.Hub):
         except AttributeError:
             self.modify = self.poll.register
 
-    def add(self, evtype, fileno, cb, tb, mac):
+    def add(self, evtype, fileno, cb, tb, mac, **kw):
         oldlisteners = bool(self.listeners[READ].get(fileno) or
                             self.listeners[WRITE].get(fileno))
-        listener = BaseHub.add(self, evtype, fileno, cb, tb, mac)
+        listener = BaseHub.add(self, evtype, fileno, cb, tb, mac, kw)
         try:
             if not oldlisteners:
                 # Means we've added a new listener

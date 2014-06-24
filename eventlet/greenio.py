@@ -147,7 +147,7 @@ class GreenSocket(object):
         # Only `getsockopt` is required to fix that issue, others
         # are just premature optimization to save __getattr__ call.
         self.bind = fd.bind
-#        self.close = fd.close
+        self.close = fd.close
         self.fileno = fd.fileno
         self.getsockname = fd.getsockname
         self.getsockopt = fd.getsockopt
@@ -155,8 +155,6 @@ class GreenSocket(object):
         self.setsockopt = fd.setsockopt
         self.shutdown = fd.shutdown
         self.__closed = False
-
-        self._fileno = fd.fileno()
 
     @property
     def _sock(self):
@@ -198,7 +196,7 @@ class GreenSocket(object):
                        timeout_exc=socket.timeout("timed out"))
 
     def _closed(self):
-        print >> sys.stderr, "Already closed the socket once", self, self.fd, self._fileno
+        print >> sys.stderr, "Already closed the socket once", self, self.fd
 
     def _mark_as_closed(self):
         print >> sys.stderr, "Marking", self, self._fileno, "as closed", self.__closed
@@ -234,8 +232,11 @@ class GreenSocket(object):
                 if time.time() >= end:
                     raise socket.timeout("timed out")
                 print >> sys.stderr, "*** DEBUG socket connect: on fd.fileno(%d)" % fileno
-                self._trampoline(fd, write=True, timeout=end - time.time(),
-                            timeout_exc=socket.timeout("timed out"))
+                try:
+                    self._trampoline(fd, write=True, timeout=end - time.time(),
+                           timeout_exc=socket.timeout("timed out"))
+                except IOClosed:
+                    raise socket.error(errno.EBADFD)
                 socket_checkerr(fd)
 
     def connect_ex(self, address):
@@ -306,7 +307,7 @@ class GreenSocket(object):
                     timeout=self.gettimeout(),
                     timeout_exc=socket.timeout("timed out"))
             except IOClosed as e:
-                return ''
+                raise EOFError()
 
     def recvfrom(self, *args):
         if not self.act_non_blocking:
@@ -347,7 +348,7 @@ class GreenSocket(object):
             try:
                 self._trampoline(self.fd, write=True, timeout=self.gettimeout(),
                            timeout_exc=socket.timeout("timed out"))
-            except:
+            except IOClosed:
                 raise socket.error(errno.ECONNRESET, 'Connection closed by another thread')
 
         return total_sent

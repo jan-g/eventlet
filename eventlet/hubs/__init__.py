@@ -2,6 +2,7 @@ import sys
 import os
 from eventlet.support import greenlets as greenlet
 from eventlet import patcher
+import uuid
 
 try:
     # try and import pkg_resources ...
@@ -146,31 +147,46 @@ def trampoline(fd, read=None, write=None, timeout=None,
         fileno = fd.fileno()
     except AttributeError:
         fileno = fd
+
     if timeout is not None:
-        t = hub.schedule_call_global(timeout, timeout_call, fileno, current.throw, timeout_exc)
+        t_debug = uuid.uuid4()
+        print >> sys.stderr, "*** DEBUG setting timeout_call on fileno(%d) in timeut(%s) at t_debug(%s)" %(fileno, timeout, t_debug)
+        t = hub.schedule_call_global(timeout, timeout_call, fileno, t_debug, current.throw, timeout_exc)
+
     try:
         if read:
-            listener = hub.add(hub.READ, fileno, current.switch, current.throw, mark_as_closed)
+            listener = hub.add(hub.READ, fileno, current.switch, current.throw, mark_as_closed, t_debug=t_debug)
         elif write:
-            listener = hub.add(hub.WRITE, fileno, current.switch, current.throw, mark_as_closed)
+            listener = hub.add(hub.WRITE, fileno, current.switch, current.throw, mark_as_closed, t_debug=t_debug)
+
+        # do_removelistener - when an IOClosed exception is received the
+        # current 
         do_removelistener = True
         try:
             try:
-                return hub.switch()
+                returned = hub.switch()
+                print >> sys.stderr, "*** DEBUG hub.switch returned(%s)" % returned
+                return returned
             except IOClosed as e:
-                # import pdb
-                # pdb.set_trace()
-                print >> sys.stderr, "*** DEBUG hub.switch throw IOClosed exception: exc(%s) on fileno(%s)" % (str(e), fileno)
-                print >> sys.stderr, "*** DEBUG hub contains listener: %s" % (fileno in hub.listeners[hub.READ] or fileno in hub.listeners[hub.WRITE])
+                closedfds = [list.fileno for list in hub.closed]
+                listening = fileno in hub.listeners[read and hub.READ or hub.WRITE]
+                print >> sys.stderr, "*** DEBUG hub.switch throw IOClosed(%s) on fileno(%s) closed(%s) listening(%s)" % (str(e), fileno, fileno in closedfds, listening)
                 do_removelistener = False
                 raise
             except Exception as e:
-                print >> sys.stderr, "*** DEBUG hub.switch throw exception: exc(%s) on fileno(%s)" % (str(e), fileno)
+                closedfds = [list.fileno for list in hub.closed]
+                listening = fileno in hub.listeners[read and hub.READ or hub.WRITE]
+                print >> sys.stderr, "*** DEBUG hub.switch throw exc(%s) on fileno(%s) closed(%d) listening(%s)" % (str(e), fileno, fileno in closedfds, listening)
+                if listener.spent:
+                    print >> sys.stderr, "*** DEBUG listener spent, extra(%s), not removing" % (str(listener.extra))
+                    do_removelistener = False
                 raise
         finally:
-            print >> sys.stderr, "*** DEBUG Calling hub.remove for listener %d do_removelistener(%s)" % (fileno, do_removelistener)
+            print >> sys.stderr, "*** DEBUG Calling hub.remove for listener %d" % (fileno)
+            # do_removelistener - 
             if do_removelistener:
                 hub.remove(listener)
+
     finally:
         print >> sys.stderr, "*** DEBUG Cancelling timer %s on fileno(%s) timers(%d) next_timers(%d) t.called(%s) timer(%r)" % (t is not None, fileno, len(hub.timers), len(hub.next_timers), t.called, t)
         if t is not None:
@@ -178,10 +194,10 @@ def trampoline(fd, read=None, write=None, timeout=None,
             t.cancel()
             print >> sys.stderr, "*** DEBUG cancel timer on fileno(%s) timers(%d) next_timers(%d) t.called(%s) timer(%r)" %(fileno, len(hub.timers), len(hub.next_timers), t.called, t)
 
-def timeout_call(fileno, tb, *args, **kw):
-    print >> sys.stderr, "*** DEBUG trampoline callback called on fileno(%s)" %(fileno)
+def timeout_call(fileno, t_debug, tb, *args, **kw):
+    print >> sys.stderr, "*** DEBUG trampoline callback called on fileno(%s) t_debug(%s)" %(fileno, t_debug)
     tb(*args, **kw)
-            
+
 def notify_close(fd):
     """
     A particular file descriptor has been explicitly closed. Register for any

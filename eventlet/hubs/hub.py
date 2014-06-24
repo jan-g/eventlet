@@ -46,6 +46,7 @@ class FdListener(object):
         self.cb = cb
         self.tb = tb
         self.mark_as_closed = mark_as_closed
+        self.spent = False
         print >> sys.stderr, "*** DEBUG *** creating FDListener for %s on %s at %r" % (evtype, fileno, cb)
     def __repr__(self):
         return "%s(%r, %r, %r, %r)" % (type(self).__name__, self.evtype, self.fileno,
@@ -56,6 +57,7 @@ class FdListener(object):
         self.cb = closed_callback
         if self.mark_as_closed is not None:
             self.mark_as_closed()
+        self.spent = True
 
 
 noop = FdListener(READ, 0, lambda x: None, lambda x: None, None)
@@ -141,7 +143,7 @@ class BaseHub(object):
         fp.write('\nCurrent file fp: %d\n' % fp.fileno())
         fp.close()
 
-    def add(self, evtype, fileno, cb, tb, mark_as_closed):
+    def add(self, evtype, fileno, cb, tb, mark_as_closed, extra):
         """ Signals an intent to or write a particular file descriptor.
 
         The *evtype* argument is either the constant READ or WRITE.
@@ -160,6 +162,7 @@ class BaseHub(object):
         """
         print >> sys.stderr, " *** DEBUG *** add %s listerner for %d" % (evtype, fileno)
         listener = self.lclass(evtype, fileno, cb, tb, mark_as_closed)
+        listener.extra = extra
         bucket = self.listeners[evtype]
         if fileno in bucket:
             if g_prevent_multiple_readers:
@@ -209,12 +212,17 @@ class BaseHub(object):
         return found
 
     def notify_close(self, fileno):
-        print >> sys.stderr, "notify_close called for %s - and ignored" % fileno
+        print >> sys.stderr, "*** DEBUG notify_close called for %s - and ignored" % fileno
+        print >> sys.stderr, ''.join(traceback.format_stack())
 
     def remove(self, listener):
+        if listener.spent:
+            # trampoline may trigger this in its finally section.
+            print >> sys.stderr, "***DEBUG*** Not removing a listener which is already spent. extra(%s)" % listener.extra
+
         fileno = listener.fileno
         evtype = listener.evtype
-        print >> sys.stderr, " *** DEBUG *** removing %s listerner for fileno(%d) gone(%s)" % (evtype, fileno, (fileno not in self.listeners[evtype]))
+        print >> sys.stderr, " *** DEBUG *** removing %s listerner for fileno(%d) gone(%s) closed(%s) extra(%s)" % (evtype, fileno, (fileno not in self.listeners[evtype]), fileno in [l.fileno for l in self.closed], str(listener.extra))
         print >> sys.stderr, "".join(traceback.format_stack())
         self.listeners[evtype].pop(fileno, None)
         # migrate a secondary listener to be the primary listener
@@ -404,10 +412,11 @@ class BaseHub(object):
         heapq.heapify(self.timers)
 
     def timer_canceled(self, timer):
-        self.clean_timers()
-#        self.timers_canceled += 1
-#        len_timers = len(self.timers) + len(self.next_timers)
-#        if len_timers > 1000 and len_timers/2 <= self.timers_canceled:
+        # self.clean_timers()
+        self.timers_canceled += 1
+        len_timers = len(self.timers) + len(self.next_timers)
+        if len_timers > 1000 and len_timers/2 <= self.timers_canceled:
+            self.clean_timers()
 
     def prepare_timers(self):
         heappush = heapq.heappush
