@@ -1,4 +1,5 @@
 import errno
+import os
 import heapq
 import math
 import traceback
@@ -123,6 +124,23 @@ class BaseHub(object):
             signal.signal(signal.SIGALRM, self._old_signal_handler)
         signal.alarm(0)
 
+    def get_dump_file(self, fileno, evtype):
+        return '/run/eventlet/eventlet-debug-%d-%d-%s' % (os.getpid(), fileno, evtype)
+
+    def dump(self, fileno, evtype, stack, extra=""):
+        try:
+            x = os.readlink("/proc/%d/fd/%d" %(os.getpid(), fileno))
+        except:
+            import pdb
+            pdb.set_trace()
+            raise
+        px = "-%s-" % x
+        fp = open(self.get_dump_file(fileno, evtype) + px + extra, 'w')
+        fp.write(''.join(stack))
+        fp.write('\nFileno: %s' % x)
+        fp.write('\nCurrent file fp: %d\n' % fp.fileno())
+        fp.close()
+
     def add(self, evtype, fileno, cb, tb, mark_as_closed):
         """ Signals an intent to or write a particular file descriptor.
 
@@ -140,10 +158,14 @@ class BaseHub(object):
         prepare a Python object as being closed, pre-empting further
         close operations from accidentally shutting down the wrong OS thread.
         """
+        print >> sys.stderr, " *** DEBUG *** add %s listerner for %d" % (evtype, fileno)
         listener = self.lclass(evtype, fileno, cb, tb, mark_as_closed)
         bucket = self.listeners[evtype]
         if fileno in bucket:
             if g_prevent_multiple_readers:
+                self.dump(fileno, evtype, traceback.format_stack(), "-broken")
+                import pdb
+                pdb.set_trace()
                 raise RuntimeError("Second simultaneous %s on fileno %s "\
                      "detected.  Unless you really know what you're doing, "\
                      "make sure that only one greenthread can %s any "\
@@ -156,10 +178,13 @@ class BaseHub(object):
             self.secondaries[evtype].setdefault(fileno, []).append(listener)
         else:
             bucket[fileno] = listener
+        self.dump(fileno, evtype, traceback.format_stack())
         return listener
 
     def _obsolete(self, fileno):
         print >> sys.stderr, "_obsolete called for %s" % fileno
+        import pdb
+        # pdb.set_trace()
         found = False
         for evtype, bucket in self.secondaries.items():
             if fileno in bucket:
@@ -178,7 +203,7 @@ class BaseHub(object):
                 print >> sys.stderr, "%s was in primary bucket %s, to-close %r" % (fileno, evtype, listener.cb)
                 found = True
                 listener.defang()
-                self.closed.append(bucket[fileno])
+                self.closed.append(listener)
                 self.remove(listener)
 
         return found
@@ -189,6 +214,8 @@ class BaseHub(object):
     def remove(self, listener):
         fileno = listener.fileno
         evtype = listener.evtype
+        print >> sys.stderr, " *** DEBUG *** removing %s listerner for fileno(%d) gone(%s)" % (evtype, fileno, (fileno not in self.listeners[evtype]))
+        print >> sys.stderr, "".join(traceback.format_stack())
         self.listeners[evtype].pop(fileno, None)
         # migrate a secondary listener to be the primary listener
         if fileno in self.secondaries[evtype]:
@@ -365,18 +392,22 @@ class BaseHub(object):
             clear_sys_exc_info()
 
     def add_timer(self, timer):
+        print >> sys.stderr, "** DEBUG Adding timer %r" % timer
         scheduled_time = self.clock() + timer.seconds
         self.next_timers.append((scheduled_time, timer))
         return scheduled_time
 
+    def clean_timers(self):
+        self.timers_canceled = 0
+        self.timers = [t for t in self.timers if not t[1].called]
+        self.next_timers = [t for t in self.next_timers if not t[1].called]
+        heapq.heapify(self.timers)
+
     def timer_canceled(self, timer):
-        self.timers_canceled += 1
-        len_timers = len(self.timers) + len(self.next_timers)
-        if len_timers > 1000 and len_timers/2 <= self.timers_canceled:
-            self.timers_canceled = 0
-            self.timers = [t for t in self.timers if not t[1].called]
-            self.next_timers = [t for t in self.next_timers if not t[1].called]
-            heapq.heapify(self.timers)
+        self.clean_timers()
+#        self.timers_canceled += 1
+#        len_timers = len(self.timers) + len(self.next_timers)
+#        if len_timers > 1000 and len_timers/2 <= self.timers_canceled:
 
     def prepare_timers(self):
         heappush = heapq.heappush
@@ -431,7 +462,9 @@ class BaseHub(object):
             try:
                 if timer.called:
                     self.timers_canceled -= 1
+                    print >> sys.stderr, "*** DEBUG cancelled timer - not calling %r" % timer
                 else:
+                    print >> sys.stderr, "*** DEBUG firing timer %r" % timer
                     timer()
             except self.SYSTEM_EXCEPTIONS:
                 raise

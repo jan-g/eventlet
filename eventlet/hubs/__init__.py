@@ -135,6 +135,7 @@ def trampoline(fd, read=None, write=None, timeout=None,
 
     .. note :: |internal|
     """
+    print >> sys.stderr, "*** DEBUG calling trampoline on fileno(%d), read(%s) write(%s)" %(fd.fileno(), read, write)
     t = None
     hub = get_hub()
     current = greenlet.getcurrent()
@@ -146,20 +147,41 @@ def trampoline(fd, read=None, write=None, timeout=None,
     except AttributeError:
         fileno = fd
     if timeout is not None:
-        t = hub.schedule_call_global(timeout, current.throw, timeout_exc)
+        t = hub.schedule_call_global(timeout, timeout_call, fileno, current.throw, timeout_exc)
     try:
         if read:
             listener = hub.add(hub.READ, fileno, current.switch, current.throw, mark_as_closed)
         elif write:
             listener = hub.add(hub.WRITE, fileno, current.switch, current.throw, mark_as_closed)
+        do_removelistener = True
         try:
-            return hub.switch()
+            try:
+                return hub.switch()
+            except IOClosed as e:
+                # import pdb
+                # pdb.set_trace()
+                print >> sys.stderr, "*** DEBUG hub.switch throw IOClosed exception: exc(%s) on fileno(%s)" % (str(e), fileno)
+                print >> sys.stderr, "*** DEBUG hub contains listener: %s" % (fileno in hub.listeners[hub.READ] or fileno in hub.listeners[hub.WRITE])
+                do_removelistener = False
+                raise
+            except Exception as e:
+                print >> sys.stderr, "*** DEBUG hub.switch throw exception: exc(%s) on fileno(%s)" % (str(e), fileno)
+                raise
         finally:
-            hub.remove(listener)
+            print >> sys.stderr, "*** DEBUG Calling hub.remove for listener %d do_removelistener(%s)" % (fileno, do_removelistener)
+            if do_removelistener:
+                hub.remove(listener)
     finally:
+        print >> sys.stderr, "*** DEBUG Cancelling timer %s on fileno(%s) timers(%d) next_timers(%d) t.called(%s) timer(%r)" % (t is not None, fileno, len(hub.timers), len(hub.next_timers), t.called, t)
         if t is not None:
+            print >> sys.stderr, "*** DEBUG Cancel the fer"
             t.cancel()
+            print >> sys.stderr, "*** DEBUG cancel timer on fileno(%s) timers(%d) next_timers(%d) t.called(%s) timer(%r)" %(fileno, len(hub.timers), len(hub.next_timers), t.called, t)
 
+def timeout_call(fileno, tb, *args, **kw):
+    print >> sys.stderr, "*** DEBUG trampoline callback called on fileno(%s)" %(fileno)
+    tb(*args, **kw)
+            
 def notify_close(fd):
     """
     A particular file descriptor has been explicitly closed. Register for any

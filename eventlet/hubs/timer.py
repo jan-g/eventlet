@@ -1,4 +1,5 @@
 import traceback
+import sys
 
 from eventlet.support import greenlets as greenlet, six
 from eventlet.hubs import get_hub
@@ -33,19 +34,23 @@ class Timer(object):
     def __repr__(self):
         secs = getattr(self, 'seconds', None)
         cb, args, kw = getattr(self, 'tpl', (None, None, None))
-        retval = "Timer(%s, %s, *%s, **%s)" % (
-            secs, cb, args, kw)
+        retval = "%s(%s, %s, *%s, **%s, %s)" % (
+            self.__class__.__name__, secs, cb, args, kw, id(self))
         if _g_debug and hasattr(self, 'traceback'):
             retval += '\n' + self.traceback.getvalue()
         return retval
 
     def copy(self):
+        import pdb
+        pdb.set_trace()
         cb, args, kw = self.tpl
         return self.__class__(self.seconds, cb, *args, **kw)
 
     def schedule(self):
         """Schedule this timer to run in the current runloop.
         """
+        import pdb
+        pdb.set_trace()
         self.called = False
         self.scheduled_time = get_hub().add_timer(self)
         return self
@@ -66,6 +71,7 @@ class Timer(object):
         """Prevent this timer from being called. If the timer has already
         been called or canceled, has no effect.
         """
+        print >> sys.stderr, "*** DEBUG cancel %r" % self
         if not self.called:
             self.called = True
             get_hub().timer_canceled(self)
