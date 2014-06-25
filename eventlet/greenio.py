@@ -199,7 +199,7 @@ class GreenSocket(object):
         print >> sys.stderr, "Already closed the socket once", self, self.fd
 
     def _mark_as_closed(self):
-        print >> sys.stderr, "Marking", self, self._fileno, "as closed", self.__closed
+        print >> sys.stderr, "Marking", self, "as closed", self.__closed
         self.close = self._closed
         self.__closed = True
 
